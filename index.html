@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Gestão de Obra - SPE Jardim Luz</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+    
+    <!-- Health check para detectar desconexão -->
+    <script>
+      // Envia health check a cada 30 segundos
+      const healthCheckInterval = setInterval(async () => {
+        try {
+          await fetch('/api/health', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+          });
+        } catch (e) {
+          console.warn('Servidor indisponível');
+        }
+      }, 30000);
+
+      // Notifica o servidor quando a aba/navegador fecha
+      window.addEventListener('beforeunload', async () => {
+        clearInterval(healthCheckInterval);
+        // Usa sendBeacon para garantir que chegue mesmo que a aba fecha
+        navigator.sendBeacon('/api/shutdown', JSON.stringify({ action: 'close' }));
+      });
+
+      // Também monitora se o usuário deixou a aba por 10 minutos
+      let inactiveTimer;
+      function resetInactiveTimer() {
+        clearTimeout(inactiveTimer);
+        inactiveTimer = setTimeout(() => {
+          console.log('Aba inativa por 10 minutos. Notificando servidor...');
+          navigator.sendBeacon('/api/shutdown', JSON.stringify({ action: 'inactive' }));
+        }, 10 * 60 * 1000);
+      }
+
+      // Reset do timer em atividades do usuário
+      ['mousedown', 'keydown', 'scroll', 'touchstart', 'click'].forEach(event => {
+        document.addEventListener(event, resetInactiveTimer, true);
+      });
+      resetInactiveTimer();
+    </script>
+  </body>
+</html>
