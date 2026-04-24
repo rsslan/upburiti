@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Inspetor de Planilhas</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background-color: #f4f4f9; }
+        h1, h2 { color: #333; }
+        input { margin-bottom: 20px; padding: 8px; }
+        pre { background-color: #eee; border: 1px solid #ccc; padding: 15px; white-space: pre-wrap; word-wrap: break-word; }
+        #output { margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Inspetor de Planilhas</h1>
+    <p>Carregue um arquivo .xlsx para ver como os dados são lidos pelo sistema.</p>
+    <input type="file" id="file-upload" accept=".xlsx, .xls"/>
+    <div id="output"></div>
+
+    <script>
+        document.getElementById('file-upload').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                try {
+                    const data = new Uint8Array(event.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const sheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[sheetName];
+                    const json = XLSX.utils.sheet_to_json(worksheet);
+
+                    const outputDiv = document.getElementById('output');
+                    outputDiv.innerHTML = '<h2>Dados Extraídos (copie e me envie este texto):</h2><pre>' + JSON.stringify(json.slice(0, 5), null, 2) + '</pre>'; // Mostra os 5 primeiros resultados
+                } catch (err) {
+                    document.getElementById('output').innerHTML = '<h2>Erro ao ler o arquivo:</h2><pre>' + err.message + '</pre>';
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        });
+    </script>
+</body>
+</html>
