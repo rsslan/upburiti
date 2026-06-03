@@ -68,12 +68,12 @@ const CONFIG = {
             MEDICAO: 'medicao',
         },
         saldoDevedor: {
-            CLIENTE: 'Cliente',
-            UNIDADE: 'apartamento',          
-            VALOR_ORIGINAL: 'valor original',
-            VALOR_CORRIGIDO: 'valor atualizado', 
-            VALOR_RECEBIDO: 'valor recebido',    
-            SALDO_DEVEDOR: 'Saldo devedor',
+            CLIENTE: 'Cliente|cliente|nome cliente|nome',
+            UNIDADE: 'apartamento|unidade|unid|unid.|apt|apto|apt.|apto.',          
+            VALOR_ORIGINAL: 'valor original|valor original (contrato)|valor original bruto|valor original liquido',
+            VALOR_CORRIGIDO: 'valor atualizado|valor corrigido|valor atualizado (incc)|valor corrigido (incc)|valor atualizado incc|valor corrigido incc|valor atualizado / corrigido|corrigido', 
+            VALOR_RECEBIDO: 'valor recebido|recebido|valor recebido (total)|recebido total|recebido ate data',    
+            SALDO_DEVEDOR: 'Saldo devedor|saldo devedor|saldo|saldo devedor atualizado|saldo devedor atual',
         }
     };
 
@@ -246,12 +246,6 @@ const CONFIG = {
                 }
                 return sum;
             }, 0);
-        }, [vendasData]);
-
-        const valorTotalCorrigidoResumo = React.useMemo(() => {
-            if (vendasData?.valorTotalCorrigido > 0) return vendasData.valorTotalCorrigido;
-            if (!vendasData?.contratos) return 0;
-            return vendasData.contratos.reduce((sum, contract) => sum + (contract.valorCorrigido || 0), 0);
         }, [vendasData]);
         
         return (
@@ -1520,12 +1514,28 @@ const CONFIG = {
     };
 
     const getRowValue = (row, key) => {
-        const target = normalizeKey(key);
+        const targetKeys = typeof key === 'string'
+            ? key.split('|').map(normalizeKey)
+            : [normalizeKey(key)];
+
         const normalized = Object.keys(row).reduce((acc, rowKey) => {
             acc[normalizeKey(rowKey)] = row[rowKey];
             return acc;
         }, {});
-        return normalized[target] !== undefined ? normalized[target] : row[key];
+
+        for (const target of targetKeys) {
+            if (normalized[target] !== undefined) return normalized[target];
+        }
+
+        for (const target of targetKeys) {
+            for (const rowKey of Object.keys(normalized)) {
+                if (rowKey.includes(target) || target.includes(rowKey)) {
+                    return normalized[rowKey];
+                }
+            }
+        }
+
+        return row[key];
     };
 
     const sortByCode = (a, b) => {
@@ -1878,22 +1888,23 @@ const CONFIG = {
         const contratos = data
             .map(row => {
                 const unidadeRaw = getRowValue(row, c.UNIDADE);
-                const unidade = typeof unidadeRaw === 'string' 
-                ? parseInt(unidadeRaw.replace(/\D/g, ''), 10) 
-                : parseInt(unidadeRaw, 10);
-                
-                if (!unidade || isNaN(unidade)) return null;
+                const unidade = unidadeRaw == null
+                    ? null
+                    : parseInt(String(unidadeRaw).replace(/\D/g, ''), 10);
 
-                return {
+                const contrato = {
                     cliente: getRowValue(row, c.CLIENTE) || '',
-                    unidade: unidade,
+                    unidade: Number.isFinite(unidade) ? unidade : null,
                     valorOriginal: parseCurrency(getRowValue(row, c.VALOR_ORIGINAL)),
                     valorCorrigido: parseCurrency(getRowValue(row, c.VALOR_CORRIGIDO)),
                     valorRecebido: parseCurrency(getRowValue(row, c.VALOR_RECEBIDO)),
                     saldoDevedor: parseCurrency(getRowValue(row, c.SALDO_DEVEDOR)),
                 };
+
+                const hasValues = contrato.valorOriginal !== 0 || contrato.valorCorrigido !== 0 || contrato.valorRecebido !== 0 || contrato.saldoDevedor !== 0 || contrato.cliente;
+                return hasValues ? contrato : null;
             })
-            .filter(Boolean); // Remove os nulos (linhas sem unidade)
+            .filter(Boolean); // Remove linhas vazias
 
         const valorTotalCorrigido = contratos.reduce((sum, ct) => sum + (ct.valorCorrigido || 0), 0);
         const saldoDevedorTotal = contratos.reduce((sum, ct) => sum + (ct.saldoDevedor || 0), 0);
@@ -1908,7 +1919,7 @@ const CONFIG = {
             return 51;
         };
 
-        const totalAreaVendida = contratos.reduce((sum, ct) => sum + getAreaLocal(ct.unidade), 0);
+        const totalAreaVendida = contratos.reduce((sum, ct) => sum + (Number.isFinite(ct.unidade) ? getAreaLocal(ct.unidade) : 0), 0);
         const valorMedioM2Corrigido = totalAreaVendida > 0 ? valorTotalCorrigido / totalAreaVendida : 0;
 
         return { 
@@ -1981,17 +1992,65 @@ const CONFIG = {
                 reader.readAsArrayBuffer(file);
             });
             try {
+                const detectSheetType = (sheetData) => {
+                    if (!Array.isArray(sheetData) || sheetData.length === 0) return null;
+                    const rowKeys = Object.keys(sheetData[0]).map(normalizeKey);
+                    const typeCandidates = {
+                        financeiro: Object.values(CONFIG.financeiro).flatMap(value => String(value).split('|').map(normalizeKey)),
+                        evolucao: Object.values(CONFIG.evolucao).flatMap(value => String(value).split('|').map(normalizeKey)),
+                        vendasEspelho: Object.values(CONFIG.vendasEspelho).flatMap(value => String(value).split('|').map(normalizeKey)),
+                        vendasInadimplentes: Object.values(CONFIG.vendasInadimplentes).flatMap(value => String(value).split('|').map(normalizeKey)),
+                        pls: Object.values(CONFIG.pls).flatMap(value => String(value).split('|').map(normalizeKey)),
+                        saldoDevedor: Object.values(CONFIG.saldoDevedor).flatMap(value => String(value).split('|').map(normalizeKey)),
+                    };
+
+                    const scores = Object.entries(typeCandidates).map(([type, expectedKeys]) => {
+                        const expectedSet = new Set(expectedKeys);
+                        const matchCount = rowKeys.reduce((count, key) => expectedSet.has(key) ? count + 1 : count, 0);
+                        return { type, matchCount };
+                    });
+
+                    scores.sort((a, b) => b.matchCount - a.matchCount);
+                    return scores[0].matchCount >= 2 ? scores[0].type : null;
+                };
+
                 const parsedData = {};
                 for (const file of files) {
                     const fileName = file.name.toLowerCase();
                     const data = await readFile(file);
-                    if (fileName.includes('financeiro')) parsedData.financeiro = data;
-                    else if (fileName.includes('evolucao')) parsedData.evolucao = data;
-                    else if (fileName.includes('vendas-espelho') || fileName.includes('vendas espelho') || fileName.includes('vendas_espelho')) parsedData.vendasEspelho = data;
-                    else if (fileName.includes('vendas-inadimplentes') || fileName.includes('vendas inadimplentes') || fileName.includes('vendas_inadimplentes')) parsedData.vendasInadimplentes = data;
-                    else if (fileName.includes('pls')) parsedData.pls = data;
-                    else if (fileName.includes('saldo-devedor') || fileName.includes('saldo devedor') || fileName.includes('saldodevedor') || fileName.includes('saldo_devedor')) parsedData.saldoDevedor = data;
+                    let assigned = false;
+
+                    if (fileName.includes('financeiro')) {
+                        parsedData.financeiro = data;
+                        assigned = true;
+                    } else if (fileName.includes('evolucao')) {
+                        parsedData.evolucao = data;
+                        assigned = true;
+                    } else if (fileName.includes('vendas-espelho') || fileName.includes('vendas espelho') || fileName.includes('vendas_espelho')) {
+                        parsedData.vendasEspelho = data;
+                        assigned = true;
+                    } else if (fileName.includes('vendas-inadimplentes') || fileName.includes('vendas inadimplentes') || fileName.includes('vendas_inadimplentes')) {
+                        parsedData.vendasInadimplentes = data;
+                        assigned = true;
+                    } else if (fileName.includes('pls')) {
+                        parsedData.pls = data;
+                        assigned = true;
+                    } else if (fileName.includes('saldo-devedor') || fileName.includes('saldo devedor') || fileName.includes('saldodevedor') || fileName.includes('saldo_devedor')) {
+                        parsedData.saldoDevedor = data;
+                        assigned = true;
+                    }
+
+                    if (!assigned) {
+                        const detectedType = detectSheetType(data);
+                        if (detectedType) {
+                            parsedData[detectedType] = data;
+                            console.log(`Arquivo detectado por cabeçalho como ${detectedType}: ${file.name}`);
+                        } else {
+                            console.warn(`Não foi possível identificar o arquivo automaticamente: ${file.name}`);
+                        }
+                    }
                 }
+
                 setRawFilesData(parsedData);
             } catch (error) {
                 console.error("Erro ao ler arquivos:", error);
